@@ -111,3 +111,75 @@ export async function deleteDocument(
   );
   await checked(res, "delete document");
 }
+
+export interface StreamHandlers {
+  onRetrieval?: (info: {
+    source: string | null;
+    page_num: number | null;
+    citations: Citation[];
+    images_sent: number;
+  }) => void;
+  onToken?: (text: string) => void;
+  onDone?: (answer: QueryAnswer) => void;
+  onError?: (message: string) => void;
+}
+
+/** POST /query/stream: progressive answer tokens + final attribution. */
+export async function queryRagStream(
+  query: string,
+  opts: { document_id?: string | null; top_k?: number; max_images?: number } = {},
+  handlers: StreamHandlers = {},
+  apiUrl: string = API_URL,
+): Promise<void> {
+  const res = await fetch(`${apiUrl}/query/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    body: JSON.stringify({
+      query,
+      document_id: opts.document_id ?? null,
+      top_k: opts.top_k ?? 5,
+      max_images: opts.max_images ?? 4,
+    }),
+  });
+  if (!res.ok || !res.body) {
+    await checked(res, "query stream");
+    return;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let event = "";
+  const dispatch = (data: string) => {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      handlers.onError?.("malformed stream frame");
+      return;
+    }
+    if (event === "retrieval")
+      handlers.onRetrieval?.(payload as Parameters<NonNullable<StreamHandlers["onRetrieval"]>>[0]);
+    else if (event === "token")
+      handlers.onToken?.((payload as { text: string }).text ?? "");
+    else if (event === "done")
+      handlers.onDone?.(payload as QueryAnswer);
+    else if (event === "error")
+      handlers.onError?.((payload as { detail: string }).detail ?? "stream failed");
+  };
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      let data = "";
+      for (const line of frame.split("\n")) {
+        if (line.startsWith("event:")) event = line.slice(6).trim();
+        else if (line.startsWith("data:")) data += line.slice(5).trim();
+      }
+      if (data) dispatch(data);
+    }
+  }
+}

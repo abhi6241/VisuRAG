@@ -90,6 +90,14 @@ class VLMProvider(Protocol):
         ...
 
 
+def chunk_words(text: str, *, words_per_chunk: int = 8):
+    """Split text into word chunks for simulated streaming."""
+    words = text.split(" ")
+    for i in range(0, len(words), words_per_chunk):
+        piece = " ".join(words[i : i + words_per_chunk])
+        yield piece + (" " if i + words_per_chunk < len(words) else "")
+
+
 class EchoVLMProvider:
     """Offline fallback: extractive answer from the top context block."""
 
@@ -107,6 +115,10 @@ class EchoVLMProvider:
         trimmed = snippet[:500] + ("…" if len(snippet) > 500 else "")
         note = f" (+{len(images)} schematic image(s) attached)" if images else ""
         return f"Based on the retrieved context [S1]: {trimmed}{note}"
+
+    def generate_stream(self, prompt: str, images: list[str]):
+        """Yield the answer in word chunks (simulated streaming)."""
+        yield from chunk_words(self.generate(prompt, images))
 
 
 def _chat_completion(
@@ -149,6 +161,63 @@ def _chat_completion(
     resp.raise_for_status()
     data = resp.json()
     return data["choices"][0]["message"]["content"]
+
+
+def _chat_completion_stream(
+    base_url: str,
+    model: str,
+    prompt: str,
+    images_b64: list[str],
+    *,
+    api_key: str | None = None,
+    timeout_s: float = 120.0,
+):
+    """Yield answer deltas from an OpenAI-style ``stream: true`` SSE request."""
+    import json
+
+    import requests
+
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    for b64 in images_b64:
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{b64}"},
+            }
+        )
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    with requests.post(
+        f"{base_url.rstrip('/')}/chat/completions",
+        json={
+            "model": model,
+            "stream": True,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": content},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 1024,
+        },
+        headers=headers,
+        timeout=timeout_s,
+        stream=True,
+    ) as resp:
+        resp.raise_for_status()
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                return
+            try:
+                delta = json.loads(payload)["choices"][0]["delta"]
+            except (ValueError, KeyError, IndexError):
+                continue
+            piece = delta.get("content")
+            if piece:
+                yield piece
 
 
 class OllamaVLMProvider:
@@ -197,6 +266,19 @@ class OllamaVLMProvider:
         resp.raise_for_status()
         return resp.json()["message"]["content"]
 
+    def generate_stream(self, prompt: str, images: list[str]):
+        """True token streaming via ``/v1/chat/completions``; falls back to a
+        single chunk (native API / errors) so callers always get an answer."""
+        try:
+            yield from _chat_completion_stream(
+                f"{self.base_url}/v1", self.model, prompt, images,
+                timeout_s=self.timeout_s,
+            )
+            return
+        except Exception:
+            pass
+        yield self.generate(prompt, images)
+
 
 class OpenAICompatibleVLMProvider:
     """Any OpenAI-style vision endpoint (vLLM, LM Studio, hosted)."""
@@ -216,6 +298,18 @@ class OpenAICompatibleVLMProvider:
             self.base_url, self.model, prompt, images,
             api_key=self.api_key, timeout_s=self.timeout_s,
         )
+
+    def generate_stream(self, prompt: str, images: list[str]):
+        """True token streaming; single-chunk fallback on any SSE failure."""
+        try:
+            yield from _chat_completion_stream(
+                self.base_url, self.model, prompt, images,
+                api_key=self.api_key, timeout_s=self.timeout_s,
+            )
+            return
+        except Exception:
+            pass
+        yield self.generate(prompt, images)
 
 
 class GroqVLMProvider:
@@ -254,6 +348,18 @@ class GroqVLMProvider:
             self.base_url, self.model, prompt, images,
             api_key=self.api_key, timeout_s=self.timeout_s,
         )
+
+    def generate_stream(self, prompt: str, images: list[str]):
+        """True token streaming; single-chunk fallback on any SSE failure."""
+        try:
+            yield from _chat_completion_stream(
+                self.base_url, self.model, prompt, images,
+                api_key=self.api_key, timeout_s=self.timeout_s,
+            )
+            return
+        except Exception:
+            pass
+        yield self.generate(prompt, images)
 
 
 def create_vlm_provider(settings) -> VLMProvider:

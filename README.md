@@ -76,6 +76,11 @@ curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{"query":"Which pin is VCC?","document_id":"<id>"}'
 
+# Streaming RAG (SSE: retrieval -> token* -> done; errors as "error")
+curl -N -X POST http://localhost:8000/query/stream \
+  -H "Content-Type: application/json" \
+  -d '{"query":"Which pin is VCC?","document_id":"<id>"}'
+
 # Delete one document (both modalities + in-memory BM25 entries)
 curl -X DELETE http://localhost:8000/documents/<document_id>
 

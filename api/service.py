@@ -214,19 +214,54 @@ class VisuRAGService:
         top_k: int = 5, max_images: int = 2,
     ) -> QueryResponse:
         """Hybrid retrieve → multimodal prompt → VLM → attributed response."""
+        hits, rag_prompt, images_b64 = self._prepare(
+            prompt, document_id=document_id, top_k=top_k, max_images=max_images,
+        )
+        if not hits:
+            return self._empty_response()
+        answer = self.vlm.generate(rag_prompt, images_b64)
+        return self._respond(hits, rag_prompt, images_b64, answer)
+
+    def query_stream(
+        self, prompt: str, *, document_id: str | None = None,
+        top_k: int = 5, max_images: int = 2,
+    ):
+        """Yield ``(event, data)`` SSE pairs: ``retrieval`` → ``token``* →
+        ``done``. ``done`` carries the full :class:`QueryResponse` dict."""
+        hits, rag_prompt, images_b64 = self._prepare(
+            prompt, document_id=document_id, top_k=top_k, max_images=max_images,
+        )
+        if not hits:
+            empty = self._empty_response()
+            yield "retrieval", {"citations": [], "images_sent": 0}
+            yield "done", empty.model_dump()
+            return
+        citations = [c.model_dump() for c in self._citations(hits)]
+        yield "retrieval", {
+            "source": hits[0].payload.get("source"),
+            "page_num": hits[0].payload.get("page_num"),
+            "citations": citations,
+            "images_sent": len(images_b64),
+        }
+        streamer = getattr(self.vlm, "generate_stream", None)
+        if streamer is None:  # provider without streaming — one chunk
+            streamer = lambda p, i: iter([self.vlm.generate(p, i)])  # noqa: E731
+        pieces: list[str] = []
+        for piece in streamer(rag_prompt, images_b64):
+            pieces.append(piece)
+            yield "token", {"text": piece}
+        yield "done", self._respond(
+            hits, rag_prompt, images_b64, "".join(pieces)
+        ).model_dump()
+
+    # -- shared RAG helpers ------------------------------------------
+    def _prepare(self, prompt, *, document_id, top_k, max_images):
+        """Retrieve + build prompt + encode evidence images."""
         s = self.settings
         hits = self.search(prompt, document_id=document_id, limit=top_k)
         if not hits:
-            return QueryResponse(
-                answer="No relevant context was found in the indexed documents, "
-                "so I cannot answer. Try ingesting the datasheet first.",
-                model=getattr(self.vlm, "name", "unknown"),
-                provider=s.vlm_provider,
-                citations=[],
-            )
-        rag_prompt = build_rag_prompt(
-            prompt, hits, max_chars=s.max_context_chars
-        )
+            return hits, "", []
+        rag_prompt = build_rag_prompt(prompt, hits, max_chars=s.max_context_chars)
         image_paths = pick_evidence_images(hits, max_images=max_images)
         images_b64: list[str] = []
         for p in image_paths:
@@ -234,9 +269,20 @@ class VisuRAGService:
                 images_b64.append(encode_image_base64(p))
             except (OSError, ValueError):
                 continue  # missing/corrupt patch file — text context still works
-        answer = self.vlm.generate(rag_prompt, images_b64)
+        return hits, rag_prompt, images_b64
 
-        citations = [
+    def _empty_response(self) -> QueryResponse:
+        s = self.settings
+        return QueryResponse(
+            answer="No relevant context was found in the indexed documents, "
+            "so I cannot answer. Try ingesting the datasheet first.",
+            model=getattr(self.vlm, "name", "unknown"),
+            provider=s.vlm_provider,
+            citations=[],
+        )
+
+    def _citations(self, hits) -> list[SourceCitation]:
+        return [
             SourceCitation(
                 source=h.payload.get("source"),
                 page_num=h.payload.get("page_num"),
@@ -252,6 +298,10 @@ class VisuRAGService:
             )
             for h in hits
         ]
+
+    def _respond(self, hits, rag_prompt, images_b64, answer) -> QueryResponse:
+        s = self.settings
+        citations = self._citations(hits)
         top = hits[0].payload
         top_evidence = citations[0].image_patch_paths if citations else []
         return QueryResponse(

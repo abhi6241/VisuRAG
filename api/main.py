@@ -10,6 +10,8 @@ Endpoints:
 - ``POST /query`` — full RAG: hybrid retrieval → multimodal prompt
   (text + schematic patches) → VLM → attributed answer JSON
   (``answer``, ``source``, ``page_num``, ``image_patch_paths``).
+- ``POST /query/stream`` — same RAG as SSE: ``retrieval`` → ``token``* →
+  ``done`` (full ``QueryResponse`` JSON) ; failures arrive as ``error``.
 - ``DELETE /documents/{document_id}`` — remove one document from Qdrant
   (both modalities) + the BM25 side-index. Unknown id → 404.
 - ``GET /files/...`` — serves cached page/patch PNGs for visual citation.
@@ -23,12 +25,13 @@ Run locally::
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from .config import APISettings
 from .schemas import (
@@ -164,6 +167,32 @@ def delete_document(document_id: str):
     if not svc().delete_document(document_id):
         raise HTTPException(status_code=404, detail="document not found")
     return DeleteResponse(document_id=document_id, deleted=True)
+
+
+# -- query streaming (SSE) -------------------------------------------
+def _sse(event: str, data: dict) -> str:
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/query/stream")
+def query_stream(req: QueryRequest):
+    try:
+        q = req.effective_query()
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    service = svc()
+
+    def gen():
+        try:
+            for event, data in service.query_stream(
+                q, document_id=req.document_id,
+                top_k=req.top_k, max_images=req.max_images,
+            ):
+                yield _sse(event, data)
+        except Exception as e:  # VLM failure mid-stream → error event
+            yield _sse("error", {"detail": f"generation failed: {e}"})
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 # -- evidence files (visual citation) ----------------------------------

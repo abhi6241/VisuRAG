@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Streaming RAG: `POST /query/stream` (SSE `retrieval` → `token`* → `done`, failures as `error`). Providers gain `generate_stream()` (true token streaming for OpenAI-style endpoints incl. Groq/Ollama, word-chunks for echo, single-chunk fallback); service shares `_prepare()`/`_citations()`/`_respond()` with `/query`. Frontend streams via `queryRagStream()` with progressive token display + pulsing cursor.
+- Verified: SSE frame order `retrieval → 3×token → done`, concatenated tokens equal the full answer; frontend build clean.
 - Groq hosted-LLM provider (`GroqVLMProvider`, exported from `api`):
   `VISURAG_VLM_PROVIDER=groq` + `VISURAG_GROQ_API_KEY` (or `GROQ_API_KEY`,
   free at `console.groq.com/keys`) sends the RAG prompt + schematic images

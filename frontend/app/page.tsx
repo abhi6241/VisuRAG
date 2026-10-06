@@ -7,7 +7,7 @@ import {
   deleteDocument,
   fetchHealth,
   ingestPdf,
-  queryRag,
+  queryRagStream,
   type Health,
   type IngestedDoc,
   type QueryAnswer,
@@ -17,6 +17,7 @@ interface ChatMessage {
   id: number;
   query: string;
   answer?: QueryAnswer;
+  partial?: string;
   error?: string;
 }
 
@@ -112,26 +113,28 @@ export default function Home() {
     if (!q || asking) return;
     const id = nextId++;
     setInput("");
-    setMessages((prev) => [...prev, { id, query: q }]);
+    setMessages((prev) => [...prev, { id, query: q, partial: "" }]);
     setSelectedId(id);
     setAsking(true);
+    const patch = (fn: (m: ChatMessage) => ChatMessage) =>
+      setMessages((prev) => prev.map((m) => (m.id === id ? fn(m) : m)));
     try {
-      const answer = await queryRag(
+      await queryRagStream(
         q,
         { document_id: scope || null, top_k: 5, max_images: 4 },
+        {
+          onToken: (text) =>
+            patch((m) => ({ ...m, partial: (m.partial ?? "") + text })),
+          onDone: (answer) => patch((m) => ({ ...m, answer, partial: undefined })),
+          onError: (message) => patch((m) => ({ ...m, error: message })),
+        },
         apiUrl,
       );
-      setMessages((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, answer } : m)),
-      );
     } catch (err: unknown) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === id
-            ? { ...m, error: err instanceof Error ? err.message : String(err) }
-            : m,
-        ),
-      );
+      patch((m) => ({
+        ...m,
+        error: err instanceof Error ? err.message : String(err),
+      }));
     } finally {
       setAsking(false);
     }
@@ -259,6 +262,14 @@ export default function Home() {
                 {m.error && (
                   <div className="self-start rounded-2xl rounded-bl-sm border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
                     {m.error}
+                  </div>
+                )}
+                {!m.answer && !m.error && (
+                  <div className="self-start rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-4 py-2 text-sm shadow-sm">
+                    <p className="whitespace-pre-wrap leading-relaxed">
+                      {m.partial}
+                      <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-indigo-400 align-middle" />
+                    </p>
                   </div>
                 )}
               </div>
