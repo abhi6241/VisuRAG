@@ -177,6 +177,38 @@ class VisuRAGService:
         self._ensure_bm25(document_id)
         return self.retriever.search(query, document_id=document_id, limit=limit)
 
+    def delete_document(self, document_id: str) -> bool:
+        """Remove a document from Qdrant + the BM25 registry.
+
+        Returns True when the document existed (in either store),
+        False when nothing was found.
+        """
+        from qdrant_client.http.models import FieldCondition, Filter, MatchValue
+
+        known = document_id in self._chunks_by_doc
+        if not known:
+            records, _ = self.store.client.scroll(
+                collection_name=self.store.config.text_collection,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="document_id", match=MatchValue(value=document_id)
+                        )
+                    ]
+                ),
+                limit=1,
+                with_payload=False,
+                with_vectors=False,
+            )
+            known = bool(records)
+        if not known:
+            return False
+        self.store.delete_document(document_id)
+        self._chunks_by_doc.pop(document_id, None)
+        all_chunks = [c for cs in self._chunks_by_doc.values() for c in cs]
+        self.retriever.index_chunks(all_chunks)
+        return True
+
     def query(
         self, prompt: str, *, document_id: str | None = None,
         top_k: int = 5, max_images: int = 2,

@@ -24,6 +24,12 @@ class IngestResponse(BaseModel):
     cache_hit: bool
 
 
+# -- documents ---------------------------------------------------------
+class DeleteResponse(BaseModel):
+    document_id: str
+    deleted: bool
+
+
 # -- search ------------------------------------------------------------
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)

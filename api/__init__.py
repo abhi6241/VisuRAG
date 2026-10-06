@@ -11,6 +11,7 @@ Public API::
 from .config import APISettings
 from .main import app
 from .schemas import (
+    DeleteResponse,
     HealthResponse,
     IngestResponse,
     QueryRequest,
@@ -33,6 +34,7 @@ from .vlm import (
 
 __all__ = [
     "APISettings",
+    "DeleteResponse",
     "EchoVLMProvider",
     "HealthResponse",
     "IngestResponse",

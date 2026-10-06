@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import EvidencePane from "@/components/EvidencePane";
 import {
   API_URL,
+  deleteDocument,
   fetchHealth,
   ingestPdf,
   queryRag,
@@ -86,6 +87,23 @@ export default function Home() {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  async function onDeleteScoped() {
+    if (!scope) return;
+    const doc = docs.find((d) => d.document_id === scope);
+    if (!window.confirm(`Delete "${doc?.source ?? scope}" from the index?`))
+      return;
+    try {
+      await deleteDocument(scope, apiUrl);
+    } catch (e: unknown) {
+      setUploadError(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    const removed = scope;
+    setDocs((prev) => prev.filter((d) => d.document_id !== removed));
+    setScope("");
+    setSelectedId(null);
   }
 
   async function onAsk(e: React.FormEvent) {
@@ -182,6 +200,15 @@ export default function Home() {
                 </option>
               ))}
             </select>
+            {scope && (
+              <button
+                onClick={() => void onDeleteScoped()}
+                title="Delete this document from the index"
+                className="rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-700 hover:bg-red-100"
+              >
+                Delete
+              </button>
+            )}
           </label>
         )}
       </div>

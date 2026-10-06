@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-06
+### Added
+- Root `README.md`: overview, pipeline diagram, prerequisites, quickstart (venv + `uvicorn` + `npm run dev`), API curl examples (ingest/search/query/delete/files), `VISURAG_` config table, structure, verification, roadmap.
+- Per-document delete: `DELETE /documents/{document_id}` (`DeleteResponse`, 404 on unknown id; removes both Qdrant collections + BM25 registry entries, restart-safe via existence scroll) + frontend Delete button on the scoped doc (confirm dialog, resets scope/selection) via `deleteDocument()` in `lib/api.ts`.
+- Smoke-tested: ingest → 1 hit → delete (200) → re-delete/unknown (404) → 0 hits after; frontend `npm run build` clean.
+
 ## [0.6.0] - 2026-10-06
 ### Added
 - Next.js frontend in `frontend/` (Step 5 — VisuRAG MVP complete):

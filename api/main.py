@@ -10,6 +10,8 @@ Endpoints:
 - ``POST /query`` — full RAG: hybrid retrieval → multimodal prompt
   (text + schematic patches) → VLM → attributed answer JSON
   (``answer``, ``source``, ``page_num``, ``image_patch_paths``).
+- ``DELETE /documents/{document_id}`` — remove one document from Qdrant
+  (both modalities) + the BM25 side-index. Unknown id → 404.
 - ``GET /files/...`` — serves cached page/patch PNGs for visual citation.
 
 Run locally::
@@ -30,6 +32,7 @@ from fastapi.responses import FileResponse
 
 from .config import APISettings
 from .schemas import (
+    DeleteResponse,
     HealthResponse,
     IngestResponse,
     QueryRequest,
@@ -49,7 +52,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="VisuRAG", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="VisuRAG", version="0.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -153,6 +156,14 @@ def query(req: QueryRequest):
         raise HTTPException(
             status_code=502, detail=f"generation failed: {e}"
         ) from e
+
+
+# -- documents -------------------------------------------------------
+@app.delete("/documents/{document_id}", response_model=DeleteResponse)
+def delete_document(document_id: str):
+    if not svc().delete_document(document_id):
+        raise HTTPException(status_code=404, detail="document not found")
+    return DeleteResponse(document_id=document_id, deleted=True)
 
 
 # -- evidence files (visual citation) ----------------------------------

@@ -84,8 +84,7 @@ export async function ingestPdf(
   return (await checked(res, "ingest")) as IngestedDoc;
 }
 
-export async function queryRag(
-  query: string,
+export async function queryRag(  query: string,
   opts: { document_id?: string | null; top_k?: number; max_images?: number } = {},
   apiUrl: string = API_URL,
 ): Promise<QueryAnswer> {
@@ -100,4 +99,15 @@ export async function queryRag(
     }),
   });
   return (await checked(res, "query")) as QueryAnswer;
+}
+
+export async function deleteDocument(
+  document_id: string,
+  apiUrl: string = API_URL,
+): Promise<void> {
+  const res = await fetch(
+    `${apiUrl}/documents/${encodeURIComponent(document_id)}`,
+    { method: "DELETE" },
+  );
+  await checked(res, "delete document");
 }
