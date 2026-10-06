@@ -20,7 +20,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class APISettings(BaseSettings):
     """Environment-driven backend settings."""
 
-    model_config = SettingsConfigDict(env_prefix="VISURAG_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="VISURAG_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # -- vector store -------------------------------------------------
     qdrant_mode: str = "path"  # memory | path | url
@@ -57,7 +62,7 @@ class APISettings(BaseSettings):
     # Groq hosted inference (OpenAI-compatible). Free key at
     # https://console.groq.com/keys — no local server needed.
     groq_api_key: str | None = None
-    groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    groq_model: str = "qwen/qwen3.8-27b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
     vlm_timeout_s: float = 120.0
     max_evidence_images: int = 2

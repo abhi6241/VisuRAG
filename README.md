@@ -102,7 +102,7 @@ Backend settings use the `VISURAG_` prefix (see `api/config.py`):
 | `VISURAG_VLM_PROVIDER` | `echo` | `echo` (offline extractive) / `ollama` / `openai-compatible` / `groq` |
 | `VISURAG_OLLAMA_MODEL` | `llama3.2-vision` | e.g. `qwen2-vl`; needs Ollama running |
 | `VISURAG_GROQ_API_KEY` | — | Groq key (free at `console.groq.com/keys`); or plain `GROQ_API_KEY` |
-| `VISURAG_GROQ_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | e.g. `qwen/qwen3.8-27b` |
+| `VISURAG_GROQ_MODEL` | `qwen/qwen3.8-27b` | e.g. `qwen/qwen3.8-27b` |
 | `VISURAG_OPENAI_COMPATIBLE_BASE_URL` / `..._MODEL` / `..._API_KEY` | — | vLLM / LM Studio / hosted vision endpoint |
 | `VISURAG_INGEST_DPI` | `150` | PDF render resolution for `/ingest` |
 | `VISURAG_API_KEY` | — (open) | If set, all routes except `/health` require `X-API-Key` (`?api_key=` works for `/files` images) |

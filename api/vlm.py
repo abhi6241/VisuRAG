@@ -158,7 +158,12 @@ def _chat_completion(
         headers=headers,
         timeout=timeout_s,
     )
-    resp.raise_for_status()
+    try:
+        resp.raise_for_status()
+    except Exception as e:
+        # Surface the provider's message (e.g. unknown model, bad key)
+        # instead of a bare HTTP status.
+        raise RuntimeError(f"{e} — {resp.text[:300]}") from e
     data = resp.json()
     return data["choices"][0]["message"]["content"]
 
@@ -321,8 +326,9 @@ class GroqVLMProvider:
             uvicorn api.main:app --port 8000
 
     Uses Groq's OpenAI-compatible ``/chat/completions`` with a
-    vision-capable model (default Llama 4 Scout; swap via
-    ``VISURAG_GROQ_MODEL``, e.g. ``qwen/qwen3.8-27b``).
+    vision-capable model (default ``qwen/qwen3.8-27b``; swap via
+    ``VISURAG_GROQ_MODEL``, e.g. ``meta-llama/llama-4-scout-17b-16e-instruct``
+    if available on your account).
     """
 
     DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"

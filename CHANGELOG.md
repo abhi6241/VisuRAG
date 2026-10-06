@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VISURAG_VLM_PROVIDER=groq` + `VISURAG_GROQ_API_KEY` (or `GROQ_API_KEY`,
   free at `console.groq.com/keys`) sends the RAG prompt + schematic images
   to `https://api.groq.com/openai/v1/chat/completions` (Bearer auth) with a
-  vision-capable model (default `meta-llama/llama-4-scout-17b-16e-instruct`,
+  vision-capable model (default `qwen/qwen3.8-27b`, live-verified,
   swap via `VISURAG_GROQ_MODEL`, base override via `VISURAG_GROQ_BASE_URL`).
   Missing key fails fast with a clear error. README gains a "Using Groq"
   section + config rows.
