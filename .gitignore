@@ -15,6 +15,9 @@ data/cache/
 # Local Qdrant persistent storage (vector_db path mode)
 data/qdrant/
 
+# Raw PDF uploads via POST /ingest (served copies, never commit)
+data/uploads/
+
 # Node
 frontend/node_modules/
 frontend/.next/

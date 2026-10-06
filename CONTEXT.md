@@ -10,7 +10,7 @@
   - Index text and visual embeddings in a vector DB for hybrid retrieval.
   - Provide search + reranking + grounded generation via API.
   - Provide Next.js frontend for upload, search, and visual citation.
-- **Status:** Step 3 done (2026-10-06) — ingestion + Qdrant vector layer + hybrid retrieval (dense + BM25 → RRF → cross-encoder rerank) implemented and smoke-tested; api still skeleton.
+- **Status:** Step 4 done (2026-10-06) — FastAPI backend (`/health`, `/ingest`, `/search`, `/query`, `/files`) + VLM integration (echo-offline default, Ollama `llama3.2-vision`/`qwen2-vl` + OpenAI-compatible) implemented and smoke-tested; frontend still placeholder.
 
 ## 2. Tech Stack Choices
 | Layer | Choice | Rationale / Notes |
@@ -22,9 +22,10 @@
 | Embeddings | `fastembed==0.8.1` (ONNX text + CLIP-vision, lazy) + `HashEmbeddingProvider` (offline deterministic fallback) | `FastEmbedTextProvider` (bge-small 384-d), `FastEmbedImageProvider` (CLIP ViT-B/32 512-d), optional `SentenceTransformerProvider`. Hash provider needs no downloads — used for tests. |
 | Retrieval (hybrid) | `rank-bm25==0.2.2` (sparse) + Qdrant dense + RRF (`k=60`) | Dense fan-out over `visurag_text` (+ opt-in CLIP-text arm over `visurag_visual`), BM25 side-index for exact keyword matches (part numbers, pin names), rank-based RRF fusion (no score normalization). Lives in `retrieval/`. |
 | Reranker | `sentence-transformers==6.1.0` (`CrossEncoder`, default `ms-marco-MiniLM-L-6-v2`, BGE swap-in) + `HeuristicReranker` (offline fallback) | `torch==2.14.1`, `transformers==5.18.0`. Cross-encoder loads lazily on first rerank; heuristic uses token-overlap + phrase bonus for tests. |
-| API | FastAPI + Uvicorn | Lives in `api/`. |
+| API | FastAPI `==0.118.0` + Uvicorn `==0.34.2` (+ `httpx`, `starlette`, `python-multipart`, `requests`) | `GET /health`, `POST /ingest` (multipart PDF), `POST /search` (retrieval only), `POST /query` (RAG + VLM), `GET /files/...` (evidence PNGs). Lives in `api/`. Run: `uvicorn api.main:app --port 8000` or `python -m api`. |
+| VLM | `EchoVLMProvider` (offline extractive fallback, default) + `OllamaVLMProvider` + `OpenAICompatibleVLMProvider` | Echo needs no server (tests/CI). Ollama: OpenAI-compatible `/v1/chat/completions` first, native `/api/chat` fallback; default model `llama3.2-vision` (`qwen2-vl` swap-in via `VISURAG_OLLAMA_MODEL`). Generic endpoint via `VISURAG_OPENAI_COMPATIBLE_BASE_URL`. Multimodal prompt = `[Sn]` context blocks + up to `max_evidence_images` (default 2) base64 patches (downscaled to 1024px). Lives in `api/vlm.py`. |
 | Frontend | Next.js (TypeScript) | Lives in `frontend/`. Separate Node project, not Python. |
-| Config / Env | `python-dotenv`, `pydantic-settings` (planned) | For Qdrant URL, API keys, model names. |
+| Config / Env | `pydantic-settings==2.7.0` (+ `python-dotenv==1.2.4`) | `APISettings` (`VISURAG_` prefix) in `api/config.py`: qdrant mode/path/url, encoder choices, reranker, `vlm_provider`, Ollama/OpenAI URLs + models, `ingest_dpi`, top-k budgets. |
 | Dev tooling | `pytest`, `ruff`, `black` (planned) | To be added to `requirements.txt`. |
 
 ## 3. File Structure
@@ -33,13 +34,14 @@ VisuRAG/
 ├── venv/                  # Local Python virtual environment (not committed)
 ├── CONTEXT.md             # This file — architecture + state
 ├── CHANGELOG.md           # Keep a Changelog history
-├── requirements.txt       # Pinned Python deps (PyMuPDF, pdf2image, Pillow), venv-only
-├── .gitignore             # venv/, __pycache__, .env, data/cache/, data/qdrant/, node_modules
+├── requirements.txt       # Pinned Python deps (ingest + Qdrant + retrieval + FastAPI/VLM), venv-only
+├── .gitignore             # venv/, __pycache__, .env, data/cache/, data/qdrant/, data/uploads/, node_modules
 ├── README.md              # (planned) setup + usage
 ├── data/cache/            # (gitignored) ingestion disk cache
 │   ├── pages/<doc_id>/p000.png ...
 │   ├── patches/<doc_id>/p000_r00_c00.png ...
 │   └── manifests/<doc_id>.json
+├── data/uploads/          # (gitignored) raw PDFs persisted by POST /ingest
 ├── ingestion/             # PDF parsing & image patch extraction (Step 1 DONE)
 │   ├── __init__.py        # Public API re-exports
 │   ├── __main__.py        # CLI: python -m ingestion <pdf>
@@ -68,8 +70,14 @@ VisuRAG/
 │   ├── fusion.py          # rrf_fuse() (rank-based, no score normalization)
 │   ├── rerankers.py       # HeuristicReranker + lazy CrossEncoderReranker
 │   └── engine.py          # VisuRAGRetriever (fan-out → RRF → rerank → evidence)
-├── api/                   # FastAPI backend
-│   └── __init__.py
+├── api/                   # FastAPI backend (Step 4 DONE)
+│   ├── __init__.py        # Public API re-exports
+│   ├── __main__.py        # Runner: python -m api (uvicorn :8000)
+│   ├── config.py          # APISettings (VISURAG_ env prefix)
+│   ├── schemas.py         # Health/Ingest/Search/Query request-response models
+│   ├── vlm.py             # Echo/Ollama/OpenAI-compatible providers + RAG prompt
+│   ├── service.py         # VisuRAGService (ingest→index→retrieve→generate) + singleton
+│   └── main.py            # FastAPI app: /health, /ingest, /search, /query, /files
 └── frontend/              # Next.js client (Node, not Python)
     └── README.md          # Placeholder until `create-next-app` is run
 ```
@@ -80,6 +88,8 @@ VisuRAG/
 3. **Multimodal-first:** Store text chunks and image patches as separate points with shared `document_id` / `page_num` payload for joint retrieval and visual citation.
 4. **Qdrant collections (finalized Step 2):** Two collections, one per modality (`visurag_text` 384-d, `visurag_visual` 512-d, Cosine) — avoids dim-mismatch hacks of a single named-vector collection and allows per-modality re-indexing. Shared payload keys (`document_id`, `source`, `page_num`, `modality`) enable joint filtered retrieval; fusion lives in `retrieval/`. Config centralized in `VectorDBConfig`, not scattered.
 5. **Frontend decoupling:** `frontend/` is isolated Next.js app; communicates only via `api/` REST endpoints.
+6. **API is thin orchestration:** `api/service.py` owns no retrieval/indexing logic — it wires `ingestion/` → `vector_db/` → `retrieval/` → `api/vlm.py`. The BM25 side-index is in-memory, so the service rehydrates it per-document from Qdrant payloads (`_ensure_bm25`) after restarts; Qdrant `path` mode persists the vectors.
+7. **Offline-first backend:** default providers (`hash` embeddings, `heuristic` rerank, `echo` VLM) let every endpoint work with zero downloads and no Ollama server. Real models (FastEmbed, cross-encoder, Ollama/OpenAI-compatible VLM) are env opt-ins — same code path, no rewiring.
 
 ## 5. Ingestion Approach (Step 1)
 - **Render:** `render_pdf_to_images()` opens the PDF with PyMuPDF, applies `Matrix(dpi/72)` (default 300 DPI), converts each `Pixmap` to RGB PIL via `Image.frombytes`, and extracts text blocks via `page.get_text("blocks")` (type 0 only) for layout grounding. Vector schematics stay crisp because rasterization happens after vector scaling.
@@ -105,23 +115,34 @@ VisuRAG/
 - **Entry points:** `VisuRAGRetriever(store, text_encoder, ...)` (`index_chunks()` → `search()` → `RerankedHit` list); CLI via `python -m retrieval --pdf <pdf> --query "..."`.
 - **Smoke test (2026-10-06):** query `pin table VCC GND` over 6-chunk/24-patch index → top hits are the `VCC` pin-table chunks (fused 0.0325, rerank 2.5) with 12 evidence patches each on the correct page; by-image self-match score 1.0; live cross-encoder check (+7.28 relevant vs −11.33 irrelevant); CLI verified.
 
-## 8. Current Implementation State
+## 8. API Backend & VLM Integration (Step 4)
+- **Endpoints** (`api/main.py`, CORS open for `localhost:3000`):
+  - `GET /health` → `{status, qdrant_mode, vlm_provider, vlm_model, counts:{text, visual}}`.
+  - `POST /ingest` (multipart `file: .pdf`, optional `?dpi=`) → persists raw PDF to `data/uploads/`, runs `ingest_pdf()` (default 150 DPI) → `index_ingestion_result()` → registers BM25 chunks → `{document_id, source, pages, text_points, visual_points, cache_hit}`. Non-PDF/empty → 400, render/index failure → 422.
+  - `POST /search` `{query, document_id?, limit?}` → hybrid retrieval only (no generation) → `{query, document_id, hits:[{key, modality, text, source, page_num, fused_score, rerank_score, evidence_image_paths}]}`.
+  - `POST /query` `{query|prompt, document_id?, top_k?, max_images?}` → full RAG: hybrid search → `build_rag_prompt()` → VLM → `{answer, model, provider, source, page_num, image_patch_paths, citations:[{source, page_num, chunk_id, text_snippet, image_patch_paths, fused_score, rerank_score}], prompt_chars, images_sent}`. Accepts both `query` and `prompt` keys. No hits → graceful 200 with "No relevant context…" answer. VLM failure → 502.
+  - `GET /files/{subpath}` → serves cached PNGs (`data/`-rooted, traversal-blocked, images only) for frontend visual citations.
+- **Service** (`api/service.py`): `VisuRAGService` builds store + encoders + `VisuRAGRetriever` + VLM once (process singleton via `get_service()`); `ingest_upload()` / `search()` / `query()` orchestrate the pipelines. `_ensure_bm25()` rehydrates the in-memory BM25 index from Qdrant scroll on first per-document query after a restart.
+- **VLM** (`api/vlm.py`): `build_rag_prompt()` renders `[S1..Sn]` blocks (`source` + page + text, `max_context_chars=6000` budget) with a cite-`[Sn]` system instruction; `pick_evidence_images()` takes the first N unique sibling-patch paths in rank order; `encode_image_base64()` downscales to 1024px. `EchoVLMProvider` (default) returns an extractive `[S1]`-grounded answer; `OllamaVLMProvider` tries OpenAI-compatible `/v1/chat/completions` then native `/api/chat`; `OpenAICompatibleVLMProvider` covers vLLM/LM-Studio/hosted. Selected via `VISURAG_VLM_PROVIDER=echo|ollama|openai-compatible`.
+- **Smoke test (2026-10-06):** TestClient (memory Qdrant + echo VLM) on 2-page synthetic PDF → `/health` ok; `/ingest` → 2 text + 24 visual points; `/search` → 2 hits with evidence paths; `/query` (both `prompt` and `query` keys) → attributed answer (`source=smoke.pdf`, int `page_num`, non-empty `image_patch_paths` + 2 citations, `images_sent=2`); empty query → 400; `/files/...` → 200 PNG; no-match query → graceful 200. Live `uvicorn` boot in `path` mode verified (`/health` 200).
+
+## 9. Current Implementation State
 - [x] Local venv created (`python3 -m venv venv`, Python 3.12.12)
 - [x] Root docs created (`CONTEXT.md`, `CHANGELOG.md`)
 - [x] Package dirs created: `ingestion/`, `vector_db/`, `retrieval/`, `api/`, `frontend/`
-- [x] `requirements.txt` pinned (PyMuPDF, pdf2image, Pillow, qdrant-client, fastembed, numpy, rank-bm25, sentence-transformers, torch, transformers), venv-only
-- [x] `.gitignore` added (`venv/`, `data/cache/`, `data/qdrant/`, `__pycache__`, `.env`, Node artifacts)
+- [x] `requirements.txt` pinned (PyMuPDF, pdf2image, Pillow, qdrant-client, fastembed, numpy, rank-bm25, sentence-transformers, torch, transformers, fastapi, uvicorn, httpx, pydantic-settings, python-multipart, requests), venv-only
+- [x] `.gitignore` added (`venv/`, `data/cache/`, `data/qdrant/`, `data/uploads/`, `__pycache__`, `.env`, Node artifacts)
 - [x] Ingestion pipeline implemented + smoke-tested (render, text blocks, patches, cache, CLI)
 - [x] Vector DB layer implemented + smoke-tested (Qdrant dual collections, batch upserts, filtered search, delete)
 - [x] Hybrid retrieval implemented + smoke-tested (dense + BM25 → RRF → cross-encoder rerank + visual evidence, CLI)
+- [x] FastAPI backend + VLM implemented + smoke-tested (`/health`, `/ingest`, `/search`, `/query`, `/files`; echo-offline default, Ollama/OpenAI-compatible opt-in)
 - [ ] `README.md` — planned next
-- [ ] No api logic implemented yet
 - [ ] No Next.js app scaffolded yet (only `frontend/README.md` placeholder)
 
-## 9. Next Steps
+## 10. Next Steps
 1. Add `README.md` (setup + usage).
-2. Scaffold `api/main.py` with FastAPI health check (+ `/search` over the retriever).
-3. Scaffold Next.js app in `frontend/`.
+2. Scaffold Next.js app in `frontend/` (upload → search/query → visual citations via `/files/...`).
+3. Optional: auth/rate-limits, per-document delete endpoint, streaming `/query`.
 
 ---
-*Last updated: 2026-10-06 — Step 3 done (hybrid retrieval + rerank).*
+*Last updated: 2026-10-06 — Step 4 done (FastAPI backend + VLM integration).*

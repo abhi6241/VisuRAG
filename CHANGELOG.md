@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-06
+### Added
+- FastAPI backend in `api/` (Step 4):
+  - `config.py`: `APISettings` (`VISURAG_` env prefix — qdrant mode/path/url, encoder/reranker choices, `vlm_provider`, Ollama/OpenAI-compatible URLs + models, `ingest_dpi`, top-k budgets); offline-safe defaults (path Qdrant, hash embeddings, heuristic rerank, echo VLM).
+  - `schemas.py`: `HealthResponse` / `IngestResponse` / `SearchRequest+Response` (`SearchHit` with `evidence_image_paths`) / `QueryRequest` (accepts both `query` and `prompt` keys) / `QueryResponse` (`answer`, `model`, `provider`, `source`, `page_num`, `image_patch_paths`, `citations[]`, `prompt_chars`, `images_sent`).
+  - `service.py`: `VisuRAGService` + `get_service()` singleton — `ingest_upload()` (PDF → `data/uploads/` → `ingest_pdf()` → `index_ingestion_result()` → BM25 registry), `search()`, `query()` (retrieve → prompt → VLM → attributed response); `_ensure_bm25()` rehydrates the in-memory BM25 index from Qdrant scroll after restarts.
+  - `main.py`: `GET /health`, `POST /ingest` (multipart PDF, `?dpi=`; 400 non-PDF/empty, 422 render/index failure), `POST /search` (retrieval only), `POST /query` (RAG + VLM; 400 empty, 502 generation failure, graceful 200 on no hits), `GET /files/...` (traversal-blocked PNG evidence serving); CORS open for `localhost:3000`; `__main__.py` runner (`python -m api`).
+- VLM integration in `api/vlm.py`:
+  - `build_rag_prompt()` (`[S1..Sn]` blocks with `source` + page + text, 6000-char budget, cite-`[Sn]` system instruction), `pick_evidence_images()` (first-N unique sibling patches), `encode_image_base64()` (1024px downscale).
+  - `EchoVLMProvider` (offline extractive `[S1]`-grounded fallback, default), `OllamaVLMProvider` (OpenAI-compatible `/v1/chat/completions` first, native `/api/chat` fallback; default `llama3.2-vision`, `qwen2-vl` swap-in), `OpenAICompatibleVLMProvider` (vLLM/LM-Studio/hosted); `create_vlm_provider()` factory via `VISURAG_VLM_PROVIDER`.
+- `requirements.txt` adds `fastapi==0.118.0`, `uvicorn==0.34.2`, `httpx==0.28.1`, `starlette==0.48.0`, `pydantic-settings==2.7.0`, `python-dotenv==1.2.4`, `python-multipart==0.0.20`, `requests==2.32.4` (venv-only); `.gitignore` adds `data/uploads/`.
+- Smoke-tested: TestClient (memory Qdrant + echo VLM) on 2-page synthetic PDF → `/health` ok; `/ingest` → 2 text + 24 visual points; `/search` → 2 hits with evidence; `/query` (both keys) → attributed answer (`source=smoke.pdf`, int `page_num`, `image_patch_paths` + 2 citations, `images_sent=2`); empty → 400; `/files/...` → 200 PNG; no-match → graceful 200; live `uvicorn` boot in `path` mode verified.
+
 ## [0.4.0] - 2026-10-06
 ### Added
 - Hybrid retrieval engine in `retrieval/` (dense + sparse → RRF → rerank):
