@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local virtualenv (never commit)
+/venv/
+
+# Env / secrets
+.env
+
+# Ingestion disk cache (rendered pages, patches, manifests)
+data/cache/
+
+# Local Qdrant persistent storage (vector_db path mode)
+data/qdrant/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
