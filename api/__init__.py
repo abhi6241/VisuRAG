@@ -21,6 +21,7 @@ from .schemas import (
     SearchResponse,
     SourceCitation,
 )
+from .security import AuthMiddleware, RateLimitMiddleware
 from .service import VisuRAGService, get_service
 from .vlm import (
     EchoVLMProvider,
@@ -35,6 +36,7 @@ from .vlm import (
 
 __all__ = [
     "APISettings",
+    "AuthMiddleware",
     "DeleteResponse",
     "EchoVLMProvider",
     "GroqVLMProvider",
@@ -44,6 +46,7 @@ __all__ = [
     "OpenAICompatibleVLMProvider",
     "QueryRequest",
     "QueryResponse",
+    "RateLimitMiddleware",
     "SearchHit",
     "SearchRequest",
     "SearchResponse",

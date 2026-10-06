@@ -62,3 +62,10 @@ class APISettings(BaseSettings):
     vlm_timeout_s: float = 120.0
     max_evidence_images: int = 2
     max_context_chars: int = 6000
+
+    # -- security (both safe by default: open auth, generous limit) --
+    # If set, every route except /health (+ docs) requires it as
+    # ``X-API-Key`` (``?api_key=`` also works, for <img> evidence URLs).
+    api_key: str | None = None
+    # Sliding-window requests/min per client IP. 0 disables. /health exempt.
+    rate_limit_per_min: int = 120

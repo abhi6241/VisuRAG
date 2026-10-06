@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Request security (`api/security.py`, stdlib-only, safe defaults):
+  `AuthMiddleware` (open when `VISURAG_API_KEY` unset; otherwise 401 without
+  a valid `X-API-Key`, `?api_key=` accepted for `/files` images, `/health` +
+  docs exempt, timing-safe compare) and `RateLimitMiddleware` (sliding-window
+  per-IP, `VISURAG_RATE_LIMIT_PER_MIN` default 120 / `0` off, `/health`
+  exempt, 429 + `Retry-After`). Frontend sends the key via
+  `NEXT_PUBLIC_VISURAG_API_KEY` (trusted deployments only; `.env.example`).
+- Verified matrix: open mode unchanged; 401 without/wrong key, 200 with key;
+  `/health` open; `/files` 401 bare / 200 with `?api_key=`; 3×200 then
+  429 + `Retry-After` at limit 3; frontend build clean.
 - Streaming RAG: `POST /query/stream` (SSE `retrieval` → `token`* → `done`, failures as `error`). Providers gain `generate_stream()` (true token streaming for OpenAI-style endpoints incl. Groq/Ollama, word-chunks for echo, single-chunk fallback); service shares `_prepare()`/`_citations()`/`_respond()` with `/query`. Frontend streams via `queryRagStream()` with progressive token display + pulsing cursor.
 - Verified: SSE frame order `retrieval → 3×token → done`, concatenated tokens equal the full answer; frontend build clean.
 - Groq hosted-LLM provider (`GroqVLMProvider`, exported from `api`):

@@ -44,6 +44,7 @@ from .schemas import (
     SearchRequest,
     SearchResponse,
 )
+from .security import AuthMiddleware, RateLimitMiddleware
 from .service import get_service
 
 settings = APISettings()
@@ -63,6 +64,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added in this order so Auth runs first, then rate limiting.
+app.add_middleware(RateLimitMiddleware, per_min=settings.rate_limit_per_min)
+app.add_middleware(AuthMiddleware, api_key=settings.api_key)
 
 
 def svc():

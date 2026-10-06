@@ -105,8 +105,12 @@ Backend settings use the `VISURAG_` prefix (see `api/config.py`):
 | `VISURAG_GROQ_MODEL` | `meta-llama/llama-4-scout-17b-16e-instruct` | e.g. `qwen/qwen3.8-27b` |
 | `VISURAG_OPENAI_COMPATIBLE_BASE_URL` / `..._MODEL` / `..._API_KEY` | — | vLLM / LM Studio / hosted vision endpoint |
 | `VISURAG_INGEST_DPI` | `150` | PDF render resolution for `/ingest` |
+| `VISURAG_API_KEY` | — (open) | If set, all routes except `/health` require `X-API-Key` (`?api_key=` works for `/files` images) |
+| `VISURAG_RATE_LIMIT_PER_MIN` | `120` | Per-IP sliding window (`0` disables); `/health` exempt, 429 + `Retry-After` |
 
 Frontend: `NEXT_PUBLIC_VISURAG_API_URL` (default `http://localhost:8000`).
+Optional `NEXT_PUBLIC_VISURAG_API_KEY` sends the key with every request —
+only for trusted self-hosted deployments, since browser keys are visible.
 
 ## Using Groq (hosted LLM, no local server)
 

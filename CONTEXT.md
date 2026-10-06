@@ -25,7 +25,7 @@
 | API | FastAPI `==0.118.0` + Uvicorn `==0.34.2` (+ `httpx`, `starlette`, `python-multipart`, `requests`) | `GET /health`, `POST /ingest` (multipart PDF), `POST /search` (retrieval only), `POST /query` (RAG + VLM), `POST /query/stream` (SSE: `retrieval` → `token`* → `done`), `DELETE /documents/{id}` (per-doc delete), `GET /files/...` (evidence PNGs). Lives in `api/`. Run: `uvicorn api.main:app --port 8000` or `python -m api`. |
 | VLM | `EchoVLMProvider` (offline extractive fallback, default) + `OllamaVLMProvider` + `GroqVLMProvider` + `OpenAICompatibleVLMProvider` | Echo needs no server (tests/CI). **Groq (hosted, no local server):** `VISURAG_VLM_PROVIDER=groq` + `VISURAG_GROQ_API_KEY` (free at `console.groq.com/keys`, or plain `GROQ_API_KEY`); default model `meta-llama/llama-4-scout-17b-16e-instruct` (`qwen/qwen3.8-27b` swap-in via `VISURAG_GROQ_MODEL`); base `https://api.groq.com/openai/v1` (overridable via `VISURAG_GROQ_BASE_URL`). Ollama: OpenAI-compatible `/v1/chat/completions` first, native `/api/chat` fallback; default model `llama3.2-vision` (`qwen2-vl` swap-in via `VISURAG_OLLAMA_MODEL`). Generic endpoint via `VISURAG_OPENAI_COMPATIBLE_BASE_URL`. Multimodal prompt = `[Sn]` context blocks + up to `max_evidence_images` (default 2) base64 patches (downscaled to 1024px). Lives in `api/vlm.py`. |
 | Frontend | Next.js `15.5.27` + React `19.3.0` + Tailwind CSS `v4.3.3` (TypeScript, App Router) | Chat UI (`app/page.tsx`) + attribution split-pane (`components/EvidencePane.tsx`) + typed client (`lib/api.ts`). Backend URL via `NEXT_PUBLIC_VISURAG_API_URL` (default `http://localhost:3000` → `http://localhost:8000`). Node-only; `package-lock.json` committed, `node_modules/` + `.next/` gitignored. |
-| Config / Env | `pydantic-settings==2.7.0` (+ `python-dotenv==1.2.4`) | `APISettings` (`VISURAG_` prefix) in `api/config.py`: qdrant mode/path/url, encoder choices, reranker, `vlm_provider`, Ollama/OpenAI URLs + models, `ingest_dpi`, top-k budgets. |
+| Config / Env | `pydantic-settings==2.7.0` (+ `python-dotenv==1.2.4`) | `APISettings` (`VISURAG_` prefix) in `api/config.py`: qdrant mode/path/url, encoder choices, reranker, `vlm_provider`, Ollama/Groq/OpenAI URLs + models + keys, `ingest_dpi`, top-k budgets, `api_key` (auth, unset = open), `rate_limit_per_min` (120, 0 = off). |
 | Dev tooling | `pytest`, `ruff`, `black` (planned) | To be added to `requirements.txt`. |
 
 ## 3. File Structure
@@ -75,9 +75,10 @@ VisuRAG/
 │   ├── __main__.py        # Runner: python -m api (uvicorn :8000)
 │   ├── config.py          # APISettings (VISURAG_ env prefix)
 │   ├── schemas.py         # Health/Ingest/Search/Query request-response models
-│   ├── vlm.py             # Echo/Ollama/OpenAI-compatible providers + RAG prompt
+│   ├── vlm.py             # Echo/Ollama/Groq/OpenAI-compatible providers + RAG prompt
+│   ├── security.py        # AuthMiddleware (optional API key) + RateLimitMiddleware
 │   ├── service.py         # VisuRAGService (ingest→index→retrieve→generate) + singleton
-│   └── main.py            # FastAPI app: /health, /ingest, /search, /query, /files
+│   └── main.py            # FastAPI app: /health, /ingest, /search, /query, /stream, /files
 └── frontend/              # Next.js client (Node-only, Step 5 DONE)
     ├── package.json        # Pinned: next 15.5.27, react 19.3.0, tailwindcss 4.3.3 (+package-lock.json)
     ├── .env.example        # NEXT_PUBLIC_VISURAG_API_URL (default http://localhost:8000)
@@ -130,6 +131,7 @@ VisuRAG/
   - `DELETE /documents/{id}` → removes the doc from both Qdrant collections + BM25 registry (existence-checked, unknown id → 404). Surfaced in the frontend as a Delete button on the scoped doc.
   - `GET /files/{subpath}` → serves cached PNGs (`data/`-rooted, traversal-blocked, images only) for frontend visual citations.
 - **Service** (`api/service.py`): `VisuRAGService` builds store + encoders + `VisuRAGRetriever` + VLM once (process singleton via `get_service()`); `ingest_upload()` / `search()` / `query()` orchestrate the pipelines. `_ensure_bm25()` rehydrates the in-memory BM25 index from Qdrant scroll on first per-document query after a restart.
+- **Security** (`api/security.py`, stdlib-only): `AuthMiddleware` (open when `VISURAG_API_KEY` unset; otherwise requires `X-API-Key` — or `?api_key=` for `/files` `<img>` URLs — everywhere except `/health` + docs, timing-safe compare); `RateLimitMiddleware` (sliding-window per-IP, default 120/min, `0` off, `/health` exempt, 429 + `Retry-After`; in-memory per process). Frontend sends the key via `NEXT_PUBLIC_VISURAG_API_KEY` (trusted deployments only).
 - **VLM** (`api/vlm.py`): `build_rag_prompt()` renders `[S1..Sn]` blocks (`source` + page + text, `max_context_chars=6000` budget) with a cite-`[Sn]` system instruction; `pick_evidence_images()` takes the first N unique sibling-patch paths in rank order; `encode_image_base64()` downscales to 1024px. `EchoVLMProvider` (default) returns an extractive `[S1]`-grounded answer; **`GroqVLMProvider`** (hosted, `VISURAG_VLM_PROVIDER=groq` + key, default Llama 4 Scout vision) sends the same text + `image_url` payload to `api.groq.com/openai/v1/chat/completions` with Bearer auth; `OllamaVLMProvider` tries OpenAI-compatible `/v1/chat/completions` then native `/api/chat`; `OpenAICompatibleVLMProvider` covers vLLM/LM-Studio/hosted. Selected via `VISURAG_VLM_PROVIDER=echo|ollama|groq|openai-compatible`.
 - **Smoke test (2026-10-06):** TestClient (memory Qdrant + echo VLM) on 2-page synthetic PDF → `/health` ok; `/ingest` → 2 text + 24 visual points; `/search` → 2 hits with evidence paths; `/query` (both `prompt` and `query` keys) → attributed answer (`source=smoke.pdf`, int `page_num`, non-empty `image_patch_paths` + 2 citations, `images_sent=2`); empty query → 400; `/files/...` → 200 PNG; no-match query → graceful 200. Live `uvicorn` boot in `path` mode verified (`/health` 200).
 
@@ -153,10 +155,12 @@ VisuRAG/
 - [x] Root `README.md` added (setup + usage + config + roadmap)
 - [x] Per-document delete (`DELETE /documents/{id}` + frontend Delete button) implemented + tested
 - [x] Next.js frontend implemented + smoke-tested (chat + upload + scope, attribution split-pane + lightbox, typed `/query` client, E2E vs live backend)
+- [x] Streaming RAG (`POST /query/stream` SSE + frontend progressive display) implemented + tested
+- [x] Groq hosted-LLM provider implemented + stub-verified
+- [x] API-key auth + per-IP rate limiting implemented + matrix-tested
 
 ## 11. Next Steps (post-MVP follow-ups)
-1. Optional: auth/rate-limits, streaming `/query`.
-2. Optional: real-model pass (FastEmbed + cross-encoder + Ollama vision) with latency/quality notes.
+1. Optional: real-model pass (FastEmbed + cross-encoder + Ollama vision) with latency/quality notes.
 
 ---
 *Last updated: 2026-10-06 — MVP complete (ingestion + vector DB + retrieval + API/VLM + frontend).*

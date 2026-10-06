@@ -8,6 +8,14 @@
 export const API_URL =
   process.env.NEXT_PUBLIC_VISURAG_API_URL ?? "http://localhost:8000";
 
+/** Optional backend key (`VISURAG_API_KEY`). Only set this for trusted
+ * self-hosted deployments — NEXT_PUBLIC_ values ship to the browser. */
+export const API_KEY = process.env.NEXT_PUBLIC_VISURAG_API_KEY ?? "";
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return API_KEY ? { ...extra, "X-API-Key": API_KEY } : extra;
+}
+
 export interface Health {
   status: string;
   qdrant_mode: string;
@@ -52,7 +60,9 @@ export function evidenceUrl(apiUrl: string, imagePath: string): string {
   let sub = imagePath;
   if (sub.startsWith("data/")) sub = sub.slice("data/".length);
   sub = sub.replace(/^\/+/, "");
-  return `${apiUrl.replace(/\/+$/, "")}/files/${sub}`;
+  const base = `${apiUrl.replace(/\/+$/, "")}/files/${sub}`;
+  // <img> tags cannot send headers, so the key travels as a query param.
+  return API_KEY ? `${base}?api_key=${encodeURIComponent(API_KEY)}` : base;
 }
 
 async function checked(res: Response, what: string): Promise<unknown> {
@@ -70,7 +80,7 @@ async function checked(res: Response, what: string): Promise<unknown> {
 }
 
 export async function fetchHealth(apiUrl: string = API_URL): Promise<Health> {
-  const res = await fetch(`${apiUrl}/health`);
+  const res = await fetch(`${apiUrl}/health`, { headers: authHeaders() });
   return (await checked(res, "health check")) as Health;
 }
 
@@ -80,7 +90,11 @@ export async function ingestPdf(
 ): Promise<IngestedDoc> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${apiUrl}/ingest`, { method: "POST", body: form });
+  const res = await fetch(`${apiUrl}/ingest`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
   return (await checked(res, "ingest")) as IngestedDoc;
 }
 
@@ -90,7 +104,7 @@ export async function queryRag(  query: string,
 ): Promise<QueryAnswer> {
   const res = await fetch(`${apiUrl}/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({
       query,
       document_id: opts.document_id ?? null,
@@ -107,7 +121,7 @@ export async function deleteDocument(
 ): Promise<void> {
   const res = await fetch(
     `${apiUrl}/documents/${encodeURIComponent(document_id)}`,
-    { method: "DELETE" },
+    { method: "DELETE", headers: authHeaders() },
   );
   await checked(res, "delete document");
 }
@@ -133,7 +147,10 @@ export async function queryRagStream(
 ): Promise<void> {
   const res = await fetch(`${apiUrl}/query/stream`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+    headers: authHeaders({
+      "Content-Type": "application/json",
+      Accept: "text/event-stream",
+    }),
     body: JSON.stringify({
       query,
       document_id: opts.document_id ?? null,
