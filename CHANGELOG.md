@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-06
+### Added
+- Next.js frontend in `frontend/` (Step 5 — VisuRAG MVP complete):
+  - `app/page.tsx`: chat UI (health badge, PDF upload bar → `POST /ingest` with Scope selector over ingested `document_id`s, message list with selectable answers, ask form → `POST /query` with `top_k=5`/`max_images=4`, loading/error states).
+  - `components/EvidencePane.tsx`: visual source attribution split-pane (top-source card, schematic-patch grid, per-citation `[Sn]` cards with snippets + rerank scores + thumbnails) plus lightbox modal (Escape/backdrop/Close).
+  - `lib/api.ts`: typed backend client (`Health`/`IngestedDoc`/`Citation`/`QueryAnswer` mirroring `api/schemas.py`); `evidenceUrl()` maps backend `data/...` patch paths to `GET /files/...`; base URL via `NEXT_PUBLIC_VISURAG_API_URL` (default `http://localhost:8000`).
+  - Pinned `package.json` (next 15.5.27, react 19.3.0, tailwindcss 4.3.3) + committed `package-lock.json`; rewritten `frontend/README.md` (setup + usage + layout); `.env.example`.
+- Smoke-tested: `npm install` + `npm run build` clean (4 static routes); live E2E (backend memory + echo, `npm start`) — `/ingest` → 2 text + 24 visual, `/query` → attributed answer, `/files/...` → 200 PNG, frontend `/` → 200.
+
 ## [0.5.0] - 2026-10-06
 ### Added
 - FastAPI backend in `api/` (Step 4):

@@ -10,7 +10,7 @@
   - Index text and visual embeddings in a vector DB for hybrid retrieval.
   - Provide search + reranking + grounded generation via API.
   - Provide Next.js frontend for upload, search, and visual citation.
-- **Status:** Step 4 done (2026-10-06) — FastAPI backend (`/health`, `/ingest`, `/search`, `/query`, `/files`) + VLM integration (echo-offline default, Ollama `llama3.2-vision`/`qwen2-vl` + OpenAI-compatible) implemented and smoke-tested; frontend still placeholder.
+- **Status:** MVP complete (2026-10-06) — ingestion + Qdrant vector layer + hybrid retrieval + FastAPI backend/VLM + Next.js frontend (chat + visual source attribution) all implemented and smoke-tested end to end.
 
 ## 2. Tech Stack Choices
 | Layer | Choice | Rationale / Notes |
@@ -24,7 +24,7 @@
 | Reranker | `sentence-transformers==6.1.0` (`CrossEncoder`, default `ms-marco-MiniLM-L-6-v2`, BGE swap-in) + `HeuristicReranker` (offline fallback) | `torch==2.14.1`, `transformers==5.18.0`. Cross-encoder loads lazily on first rerank; heuristic uses token-overlap + phrase bonus for tests. |
 | API | FastAPI `==0.118.0` + Uvicorn `==0.34.2` (+ `httpx`, `starlette`, `python-multipart`, `requests`) | `GET /health`, `POST /ingest` (multipart PDF), `POST /search` (retrieval only), `POST /query` (RAG + VLM), `GET /files/...` (evidence PNGs). Lives in `api/`. Run: `uvicorn api.main:app --port 8000` or `python -m api`. |
 | VLM | `EchoVLMProvider` (offline extractive fallback, default) + `OllamaVLMProvider` + `OpenAICompatibleVLMProvider` | Echo needs no server (tests/CI). Ollama: OpenAI-compatible `/v1/chat/completions` first, native `/api/chat` fallback; default model `llama3.2-vision` (`qwen2-vl` swap-in via `VISURAG_OLLAMA_MODEL`). Generic endpoint via `VISURAG_OPENAI_COMPATIBLE_BASE_URL`. Multimodal prompt = `[Sn]` context blocks + up to `max_evidence_images` (default 2) base64 patches (downscaled to 1024px). Lives in `api/vlm.py`. |
-| Frontend | Next.js (TypeScript) | Lives in `frontend/`. Separate Node project, not Python. |
+| Frontend | Next.js `15.5.27` + React `19.3.0` + Tailwind CSS `v4.3.3` (TypeScript, App Router) | Chat UI (`app/page.tsx`) + attribution split-pane (`components/EvidencePane.tsx`) + typed client (`lib/api.ts`). Backend URL via `NEXT_PUBLIC_VISURAG_API_URL` (default `http://localhost:3000` → `http://localhost:8000`). Node-only; `package-lock.json` committed, `node_modules/` + `.next/` gitignored. |
 | Config / Env | `pydantic-settings==2.7.0` (+ `python-dotenv==1.2.4`) | `APISettings` (`VISURAG_` prefix) in `api/config.py`: qdrant mode/path/url, encoder choices, reranker, `vlm_provider`, Ollama/OpenAI URLs + models, `ingest_dpi`, top-k budgets. |
 | Dev tooling | `pytest`, `ruff`, `black` (planned) | To be added to `requirements.txt`. |
 
@@ -78,8 +78,13 @@ VisuRAG/
 │   ├── vlm.py             # Echo/Ollama/OpenAI-compatible providers + RAG prompt
 │   ├── service.py         # VisuRAGService (ingest→index→retrieve→generate) + singleton
 │   └── main.py            # FastAPI app: /health, /ingest, /search, /query, /files
-└── frontend/              # Next.js client (Node, not Python)
-    └── README.md          # Placeholder until `create-next-app` is run
+└── frontend/              # Next.js client (Node-only, Step 5 DONE)
+    ├── package.json        # Pinned: next 15.5.27, react 19.3.0, tailwindcss 4.3.3 (+package-lock.json)
+    ├── .env.example        # NEXT_PUBLIC_VISURAG_API_URL (default http://localhost:8000)
+    ├── README.md           # Setup + usage + layout
+    ├── app/                # App Router: layout.tsx, page.tsx (chat+upload+scope), globals.css
+    ├── components/         # EvidencePane.tsx (attribution split-pane + lightbox modal)
+    └── lib/                # api.ts (typed /health /ingest /query client + evidenceUrl())
 ```
 
 ## 4. Architectural Decisions
@@ -126,7 +131,14 @@ VisuRAG/
 - **VLM** (`api/vlm.py`): `build_rag_prompt()` renders `[S1..Sn]` blocks (`source` + page + text, `max_context_chars=6000` budget) with a cite-`[Sn]` system instruction; `pick_evidence_images()` takes the first N unique sibling-patch paths in rank order; `encode_image_base64()` downscales to 1024px. `EchoVLMProvider` (default) returns an extractive `[S1]`-grounded answer; `OllamaVLMProvider` tries OpenAI-compatible `/v1/chat/completions` then native `/api/chat`; `OpenAICompatibleVLMProvider` covers vLLM/LM-Studio/hosted. Selected via `VISURAG_VLM_PROVIDER=echo|ollama|openai-compatible`.
 - **Smoke test (2026-10-06):** TestClient (memory Qdrant + echo VLM) on 2-page synthetic PDF → `/health` ok; `/ingest` → 2 text + 24 visual points; `/search` → 2 hits with evidence paths; `/query` (both `prompt` and `query` keys) → attributed answer (`source=smoke.pdf`, int `page_num`, non-empty `image_patch_paths` + 2 citations, `images_sent=2`); empty query → 400; `/files/...` → 200 PNG; no-match query → graceful 200. Live `uvicorn` boot in `path` mode verified (`/health` 200).
 
-## 9. Current Implementation State
+## 9. Frontend Architecture (Step 5)
+- **Stack:** Next.js 15.5.27 App Router + React 19.3.0 + Tailwind CSS v4.3.3 (CSS-first `@import "tailwindcss"`, `@tailwindcss/postcss`), TypeScript strict. Pinned in `frontend/package.json`; `package-lock.json` committed. Node-only directory (never Python).
+- **Chat UI** (`frontend/app/page.tsx`, client component): header (title + `/health` badge — green with VLM model + text/visual counts, red with start-backend hint), upload bar (PDF `input` → `POST /ingest`, ingested docs feed the Scope selector: all docs or one `document_id`, auto-scoped to fresh uploads), message list (user bubbles + clickable assistant answers that select the attribution target), ask form (`POST /query`, `top_k=5`, `max_images=4`), loading/error states.
+- **Attribution split-pane** (`frontend/components/EvidencePane.tsx`, right `380px` column on desktop / stacked on mobile): top-source card (`source` filename + `page_num` badges, model + `images_sent`), schematic-patch grid (click → lightbox modal, Escape/backdrop/Close to dismiss), per-citation `[Sn]` cards (file · page, rerank score, 3-line text snippet, up to 4 patch thumbnails). Empty state before the first answer.
+- **Backend client** (`frontend/lib/api.ts`): typed `Health` / `IngestedDoc` / `Citation` / `QueryAnswer` mirroring `api/schemas.py`; `fetchHealth()` / `ingestPdf()` / `queryRag()` with `detail`-aware errors; `evidenceUrl()` maps backend `data/...` patch paths to `GET /files/...` URLs. Base URL from `NEXT_PUBLIC_VISURAG_API_URL` (default `http://localhost:8000`).
+- **Smoke test (2026-10-06):** `npm install` (46 pkgs) + `npm run build` clean (4 static routes, `/` 107 kB first load); live E2E — backend (memory + echo) + `npm start`: `/ingest` → 2 text + 24 visual; `/query` → attributed answer; `/files/cache/patches/...` → 200 PNG (exactly what `evidenceUrl()` requests); frontend `/` → 200 HTML containing the app.
+
+## 10. Current Implementation State
 - [x] Local venv created (`python3 -m venv venv`, Python 3.12.12)
 - [x] Root docs created (`CONTEXT.md`, `CHANGELOG.md`)
 - [x] Package dirs created: `ingestion/`, `vector_db/`, `retrieval/`, `api/`, `frontend/`
@@ -137,12 +149,12 @@ VisuRAG/
 - [x] Hybrid retrieval implemented + smoke-tested (dense + BM25 → RRF → cross-encoder rerank + visual evidence, CLI)
 - [x] FastAPI backend + VLM implemented + smoke-tested (`/health`, `/ingest`, `/search`, `/query`, `/files`; echo-offline default, Ollama/OpenAI-compatible opt-in)
 - [ ] `README.md` — planned next
-- [ ] No Next.js app scaffolded yet (only `frontend/README.md` placeholder)
+- [x] Next.js frontend implemented + smoke-tested (chat + upload + scope, attribution split-pane + lightbox, typed `/query` client, E2E vs live backend)
 
-## 10. Next Steps
-1. Add `README.md` (setup + usage).
-2. Scaffold Next.js app in `frontend/` (upload → search/query → visual citations via `/files/...`).
-3. Optional: auth/rate-limits, per-document delete endpoint, streaming `/query`.
+## 11. Next Steps (post-MVP follow-ups)
+1. Add root `README.md` (setup + usage).
+2. Optional: auth/rate-limits, per-document delete endpoint, streaming `/query`.
+3. Optional: real-model pass (FastEmbed + cross-encoder + Ollama vision) with latency/quality notes.
 
 ---
-*Last updated: 2026-10-06 — Step 4 done (FastAPI backend + VLM integration).*
+*Last updated: 2026-10-06 — MVP complete (ingestion + vector DB + retrieval + API/VLM + frontend).*
