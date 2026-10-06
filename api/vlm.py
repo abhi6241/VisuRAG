@@ -10,6 +10,8 @@ Providers:
   endpoint, with fallback to native ``/api/chat``.
 - :class:`OpenAICompatibleVLMProvider` — any OpenAI-style vision endpoint
   (vLLM, LM Studio, …) via ``/chat/completions``.
+- :class:`GroqVLMProvider` — hosted Groq inference (OpenAI-compatible,
+  free API key, no local server) with a vision-capable model.
 
 ``build_rag_prompt()`` constructs the grounded multimodal prompt: numbered
 ``[Sn]`` context blocks (source + page + chunk text) plus an instruction to
@@ -216,8 +218,48 @@ class OpenAICompatibleVLMProvider:
         )
 
 
+class GroqVLMProvider:
+    """Hosted Groq inference — real vision answers with no local server.
+
+    Needs an API key (free at https://console.groq.com/keys)::
+
+        VISURAG_VLM_PROVIDER=groq VISURAG_GROQ_API_KEY=gsk_... \\
+            uvicorn api.main:app --port 8000
+
+    Uses Groq's OpenAI-compatible ``/chat/completions`` with a
+    vision-capable model (default Llama 4 Scout; swap via
+    ``VISURAG_GROQ_MODEL``, e.g. ``qwen/qwen3.8-27b``).
+    """
+
+    DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+
+    def __init__(
+        self, api_key: str | None, model: str,
+        base_url: str | None = None, timeout_s: float = 120.0,
+    ) -> None:
+        if not api_key:
+            raise ValueError(
+                "Groq API key required: set VISURAG_GROQ_API_KEY "
+                "(or GROQ_API_KEY). Get one free at "
+                "https://console.groq.com/keys"
+            )
+        self.base_url = (base_url or self.DEFAULT_BASE_URL).rstrip("/")
+        self.model = model
+        self.api_key = api_key
+        self.timeout_s = timeout_s
+        self.name = f"groq:{model}"
+
+    def generate(self, prompt: str, images: list[str]) -> str:
+        return _chat_completion(
+            self.base_url, self.model, prompt, images,
+            api_key=self.api_key, timeout_s=self.timeout_s,
+        )
+
+
 def create_vlm_provider(settings) -> VLMProvider:
     """Factory from :class:`APISettings` (import-cycle safe: duck-typed)."""
+    import os
+
     provider = (settings.vlm_provider or "echo").lower()
     if provider == "ollama":
         return OllamaVLMProvider(
@@ -235,6 +277,14 @@ def create_vlm_provider(settings) -> VLMProvider:
             base_url=settings.openai_compatible_base_url,
             model=settings.openai_compatible_model or "default",
             api_key=settings.openai_compatible_api_key,
+            timeout_s=settings.vlm_timeout_s,
+        )
+    if provider == "groq":
+        api_key = settings.groq_api_key or os.environ.get("GROQ_API_KEY")
+        return GroqVLMProvider(
+            api_key=api_key,
+            model=settings.groq_model,
+            base_url=settings.groq_base_url,
             timeout_s=settings.vlm_timeout_s,
         )
     return EchoVLMProvider()

@@ -24,6 +24,7 @@ from .schemas import (
 from .service import VisuRAGService, get_service
 from .vlm import (
     EchoVLMProvider,
+    GroqVLMProvider,
     OllamaVLMProvider,
     OpenAICompatibleVLMProvider,
     build_rag_prompt,
@@ -36,6 +37,7 @@ __all__ = [
     "APISettings",
     "DeleteResponse",
     "EchoVLMProvider",
+    "GroqVLMProvider",
     "HealthResponse",
     "IngestResponse",
     "OllamaVLMProvider",

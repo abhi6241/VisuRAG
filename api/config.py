@@ -54,6 +54,11 @@ class APISettings(BaseSettings):
     openai_compatible_base_url: str | None = None
     openai_compatible_model: str | None = None
     openai_compatible_api_key: str | None = None
+    # Groq hosted inference (OpenAI-compatible). Free key at
+    # https://console.groq.com/keys — no local server needed.
+    groq_api_key: str | None = None
+    groq_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
     vlm_timeout_s: float = 120.0
     max_evidence_images: int = 2
     max_context_chars: int = 6000

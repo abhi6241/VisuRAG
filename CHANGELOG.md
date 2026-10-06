@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Groq hosted-LLM provider (`GroqVLMProvider`, exported from `api`):
+  `VISURAG_VLM_PROVIDER=groq` + `VISURAG_GROQ_API_KEY` (or `GROQ_API_KEY`,
+  free at `console.groq.com/keys`) sends the RAG prompt + schematic images
+  to `https://api.groq.com/openai/v1/chat/completions` (Bearer auth) with a
+  vision-capable model (default `meta-llama/llama-4-scout-17b-16e-instruct`,
+  swap via `VISURAG_GROQ_MODEL`, base override via `VISURAG_GROQ_BASE_URL`).
+  Missing key fails fast with a clear error. README gains a "Using Groq"
+  section + config rows.
+- Verified end-to-end (TestClient, memory Qdrant) against a stub Groq
+  server: Bearer header, model id, text + 2 base64 `image_url` blocks sent;
+  stubbed answer flows through `/query` with attribution intact.
 
 ## [0.7.0] - 2026-10-06
 ### Added
